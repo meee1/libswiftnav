@@ -614,6 +614,9 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
 {
   double TOTs[n_channels];
   double min_TOT = DBL_MAX;
+  static double prs[33];
+  static double nominal = GPS_NOMINAL_RANGE;
+  static int counter = 0;
 
   for (u8 i=0; i<n_channels; i++) {
     TOTs[i] = 1e-3 * meas[i]->time_of_week_ms;
@@ -627,8 +630,9 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
     if (gpsdifftime(nav_meas[i]->tot, ephemerides[i]->toe) > 3*24*3600)
       nav_meas[i]->tot.wn -= 1;
 
-    if (TOTs[i] < min_TOT)
+    if (TOTs[i] < min_TOT) {
       min_TOT = TOTs[i];
+	  }
 
     nav_meas[i]->raw_doppler = meas[i]->carrier_freq;
     nav_meas[i]->snr = meas[i]->snr;
@@ -640,10 +644,29 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
     nav_meas[i]->lock_counter = meas[i]->lock_counter;
   }
 
+  for (u8 i=0; i<n_channels; i++) {
+	// new nominal is the old pr + the new carrierphase in m
+	if (min_TOT == nav_meas[i]->tot.tow) {
+		if (counter == 0) {
+			counter++;
+			// keep nominal default
+		} else {
+			nominal = prs[nav_meas[i]->prn] + (nav_meas[i]->raw_doppler * (GPS_C/1.57542E9));
+		}
+		break;
+	}  
+  }
+  
+  if (nominal < 0 || nominal > (GPS_NOMINAL_RANGE * 2))
+	nominal = GPS_NOMINAL_RANGE;
+  
   double clock_err, clock_rate_err;
 
-  for (u8 i=0; i<n_channels; i++) {
-    nav_meas[i]->raw_pseudorange = (min_TOT - TOTs[i])*GPS_C + GPS_NOMINAL_RANGE;
+  for (u8 i=0; i<n_channels; i++) {  
+    nav_meas[i]->raw_pseudorange = (min_TOT - TOTs[i])*GPS_C + nominal;
+	
+	// save for the next round
+	prs[nav_meas[i]->prn] = nav_meas[i]->raw_pseudorange;
 
     calc_sat_pos(nav_meas[i]->sat_pos, nav_meas[i]->sat_vel, &clock_err, &clock_rate_err, ephemerides[i], nav_meas[i]->tot);
 
