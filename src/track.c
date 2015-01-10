@@ -614,6 +614,7 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
 {
   double TOTs[n_channels];
   double min_TOT = DBL_MAX;
+  static double nominal = GPS_NOMINAL_RANGE;
 
   for (u8 i=0; i<n_channels; i++) {
     TOTs[i] = 1e-3 * meas[i]->time_of_week_ms;
@@ -640,20 +641,31 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
     nav_meas[i]->lock_counter = meas[i]->lock_counter;
   }
 
-  double clock_err, clock_rate_err;
+
+  double clock_err, clock_rate_err, usepr;
+  
+  usepr = GPS_NOMINAL_RANGE;
 
   for (u8 i=0; i<n_channels; i++) {
-    nav_meas[i]->raw_pseudorange = (min_TOT - TOTs[i])*GPS_C + GPS_NOMINAL_RANGE;
-
+    nav_meas[i]->raw_pseudorange = (min_TOT - TOTs[i])*GPS_C + nominal;
+	
     calc_sat_pos(nav_meas[i]->sat_pos, nav_meas[i]->sat_vel, &clock_err, &clock_rate_err, ephemerides[i], nav_meas[i]->tot);
 
     nav_meas[i]->pseudorange = nav_meas[i]->raw_pseudorange \
                                + clock_err*GPS_C;
     nav_meas[i]->doppler = nav_meas[i]->raw_doppler + clock_rate_err*GPS_L1_HZ;
+	
+	if (min_TOT == TOTs[i])
+		usepr = nav_meas[i]->raw_pseudorange - nav_meas[i]->doppler * GPS_L1_LAMBDA;
 
     nav_meas[i]->tot.tow -= clock_err;
     nav_meas[i]->tot = normalize_gps_time(nav_meas[i]->tot);
   }
+	nominal = usepr;
+	
+	if (nominal < 10e6 || nominal > (GPS_NOMINAL_RANGE + 10e6))
+		nominal = GPS_NOMINAL_RANGE;
+  
 }
 
 /** Compare navigation message by PRN.
