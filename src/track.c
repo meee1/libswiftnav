@@ -21,6 +21,7 @@
 #include "ephemeris.h"
 #include "tropo.h"
 #include "coord_system.h"
+#include "linear_algebra.h"
 
 /** \defgroup track Tracking
  * Functions used in tracking.
@@ -633,7 +634,7 @@ float cn0_est(cn0_est_state_t *s, float I)
 
 void calc_navigation_measurement(u8 n_channels, channel_measurement_t meas[],
                                  navigation_measurement_t nav_meas[], double nav_time,
-                                 ephemeris_t ephemerides[])
+                                 ephemeris_t ephemerides[], double rx_pos[])
 {
   channel_measurement_t* meas_ptrs[n_channels];
   navigation_measurement_t* nav_meas_ptrs[n_channels];
@@ -645,18 +646,22 @@ void calc_navigation_measurement(u8 n_channels, channel_measurement_t meas[],
     ephemerides_ptrs[i] = &ephemerides[meas[i].prn];
   }
 
-  calc_navigation_measurement_(n_channels, meas_ptrs, nav_meas_ptrs, nav_time, ephemerides_ptrs);
+  calc_navigation_measurement_(n_channels, meas_ptrs, nav_meas_ptrs, nav_time, ephemerides_ptrs, rx_pos);
 }
 
-void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], navigation_measurement_t* nav_meas[], double nav_time, ephemeris_t* ephemerides[])
+void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], navigation_measurement_t* nav_meas[], double nav_time, ephemeris_t* ephemerides[], double rx_pos[])
 {
   double TOTs[n_channels];
   double min_TOF = -DBL_MAX;
   double clock_err[n_channels], clock_rate_err[n_channels];
-
+  double nominal = GPS_NOMINAL_RANGE;
+  
   for (u8 i=0; i<n_channels; i++) {
+    // set the current ms
     TOTs[i] = 1e-3 * meas[i]->time_of_week_ms;
+    // add the part ms
     TOTs[i] += meas[i]->code_phase_chips / 1.023e6;
+    // align to nav_time
     TOTs[i] += (nav_time - meas[i]->receiver_time) * meas[i]->code_phase_rate / 1.023e6;
 
     /** \todo Handle GPS time properly here, e.g. week rollover */
@@ -671,6 +676,7 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
     nav_meas[i]->prn = meas[i]->prn;
 
     nav_meas[i]->carrier_phase = meas[i]->carrier_phase;
+    // align to nav_time
     nav_meas[i]->carrier_phase += (nav_time - meas[i]->receiver_time) * meas[i]->carrier_freq;
 
     nav_meas[i]->lock_counter = meas[i]->lock_counter;
@@ -679,14 +685,26 @@ void calc_navigation_measurement_(u8 n_channels, channel_measurement_t* meas[], 
     calc_sat_state(ephemerides[i], nav_meas[i]->tot,
                    nav_meas[i]->sat_pos, nav_meas[i]->sat_vel,
                    &clock_err[i], &clock_rate_err[i]);
-
+    
     /* remove clock error to put all tots within the same time window */
     if ((TOTs[i] + clock_err[i]) > min_TOF)
+    {
       min_TOF = TOTs[i];
+      double temp[3];
+      vector_subtract(3, nav_meas[i]->sat_pos, rx_pos, temp); /* temp = sat_pos - rx_pos */
+      nominal = vector_norm(3, temp);
+    }   
   }
+  
+  // store base to sat dist from ephem
+  // grab base 
+  // calc new base to sat 
+  // increment nominal range by new and old sat to base ephem dist
+  
+
 
   for (u8 i=0; i<n_channels; i++) {
-    nav_meas[i]->raw_pseudorange = (min_TOF - TOTs[i])*GPS_C + GPS_NOMINAL_RANGE;
+    nav_meas[i]->raw_pseudorange = (min_TOF - TOTs[i])*GPS_C + nominal;
 
     nav_meas[i]->pseudorange = nav_meas[i]->raw_pseudorange \
                                + clock_err[i]*GPS_C;
